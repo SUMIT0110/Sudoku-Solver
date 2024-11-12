@@ -14,9 +14,22 @@ st.set_page_config(
     layout="centered"
 )
 
+def load_model():
+    """Load the digit recognition model"""
+    model_path = 'models/digit_classifier.h5'
+    if not os.path.exists(model_path):
+        st.error("Model file not found. Please ensure the model is properly uploaded.")
+        return None
+    return model_path
+
 def main():
     st.title("Sudoku Puzzle Solver 🧩")
     st.write("Upload an image of a Sudoku puzzle and I'll solve it for you!")
+
+    # Load model at startup
+    model_path = load_model()
+    if model_path is None:
+        return
 
     # File uploader
     uploaded_file = st.file_uploader("Choose a Sudoku puzzle image", type=['jpg', 'jpeg', 'png'])
@@ -40,7 +53,7 @@ def main():
                 with st.spinner("Solving the puzzle..."):
                     try:
                         # Process the image
-                        solved_image = solve_sudoku(temp_path)
+                        solved_image = solve_sudoku(temp_path, model_path)
                         
                         # Convert BGR to RGB for displaying
                         solved_image_rgb = cv2.cvtColor(solved_image, cv2.COLOR_BGR2RGB)
