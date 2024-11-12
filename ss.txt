@@ -1,0 +1,338 @@
+# sudoku_utils.py
+
+import numpy as np
+import cv2
+import imutils
+from imutils.perspective import four_point_transform
+from skimage.segmentation import clear_border
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Activation
+from tensorflow.keras.layers import Flatten, Dense, Dropout, BatchNormalization
+
+class SudokuNet:
+    @staticmethod
+    def build(width, height, depth, classes):
+        model = Sequential([
+            # First CONV => RELU => CONV => RELU => POOL layer
+            Conv2D(32, (5, 5), padding="same", input_shape=(height, width, depth)),
+            BatchNormalization(),
+            Activation("relu"),
+            Conv2D(32, (5, 5), padding="same"),
+            BatchNormalization(),
+            Activation("relu"),
+            MaxPooling2D(pool_size=(2, 2)),
+            
+            # Second CONV => RELU => CONV => RELU => POOL layer
+            Conv2D(64, (3, 3), padding="same"),
+            BatchNormalization(),
+            Activation("relu"),
+            Conv2D(64, (3, 3), padding="same"),
+            BatchNormalization(),
+            Activation("relu"),
+            MaxPooling2D(pool_size=(2, 2)),
+            
+            # First set of FC => RELU layers
+            Flatten(),
+            Dense(128),
+            BatchNormalization(),
+            Activation("relu"),
+            Dropout(0.5),
+            
+            # Second set of FC => RELU layers
+            Dense(128),
+            BatchNormalization(),
+            Activation("relu"),
+            Dropout(0.5),
+            
+            # Softmax classifier
+            Dense(classes),
+            Activation("softmax")
+        ])
+        return model
+
+def find_puzzle(image, debug=False):
+    # Convert the image to grayscale and blur it slightly
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (7, 7), 3)
+    
+    # Apply adaptive thresholding and then invert the threshold map
+    thresh = cv2.adaptiveThreshold(blurred, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    thresh = cv2.bitwise_not(thresh)
+    
+    if debug:
+        cv2.imshow("Puzzle Thresh", thresh)
+        cv2.waitKey(0)
+    
+    # Find contours in the thresholded image and sort them by size
+    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+    cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+    
+    puzzleCnt = None
+    for c in cnts:
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+        if len(approx) == 4:
+            puzzleCnt = approx
+            break
+    
+    if puzzleCnt is None:
+        raise Exception("Could not find Sudoku puzzle outline.")
+        
+    if debug:
+        output = image.copy()
+        cv2.drawContours(output, [puzzleCnt], -1, (0, 255, 0), 2)
+        cv2.imshow("Puzzle Outline", output)
+        cv2.waitKey(0)
+    
+    # Apply a four point perspective transform
+    puzzle = four_point_transform(image, puzzleCnt.reshape(4, 2))
+    warped = four_point_transform(gray, puzzleCnt.reshape(4, 2))
+    
+    if debug:
+        cv2.imshow("Puzzle Transform", puzzle)
+        cv2.waitKey(0)
+    
+    return (puzzle, warped)
+
+def extract_digit(cell, debug=False):
+    # Apply thresholding to the cell
+    thresh = cv2.threshold(cell, 0, 255,
+        cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    thresh = clear_border(thresh)
+    
+    if debug:
+        cv2.imshow("Cell Thresh", thresh)
+        cv2.waitKey(0)
+    
+    # Find contours
+    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+    
+    if len(cnts) == 0:
+        return None
+    
+    c = max(cnts, key=cv2.contourArea)
+    mask = np.zeros(thresh.shape, dtype="uint8")
+    cv2.drawContours(mask, [c], -1, 255, -1)
+    
+    # Calculate percentage of filled pixels
+    (h, w) = thresh.shape
+    percentFilled = cv2.countNonZero(mask) / float(w * h)
+    
+    if percentFilled < 0.03 or percentFilled > 0.8:
+        return None
+    
+    # Apply the mask to the thresholded cell
+    digit = cv2.bitwise_and(thresh, thresh, mask=mask)
+    
+    # Add padding
+    digit = np.pad(digit, ((4,4), (4,4)), 'constant', constant_values=0)
+    
+    if debug:
+        cv2.imshow("Digit", digit)
+        cv2.waitKey(0)
+    
+    return digit
+
+# train_model.py
+
+from sudoku_utils import SudokuNet
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.datasets import mnist
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.metrics import classification_report
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.callbacks import ReduceLROnPlateau
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+
+def train_model():
+    # Initialize parameters
+    INIT_LR = 1e-3
+    EPOCHS = 50
+    BS = 64
+    
+    # Load MNIST dataset
+    print("[INFO] accessing MNIST...")
+    ((trainData, trainLabels), (testData, testLabels)) = mnist.load_data()
+    
+    # Preprocess the data
+    trainData = trainData.reshape((trainData.shape[0], 28, 28, 1))
+    testData = testData.reshape((testData.shape[0], 28, 28, 1))
+    trainData = trainData.astype("float32") / 255.0
+    testData = testData.astype("float32") / 255.0
+    
+    # Data augmentation
+    datagen = ImageDataGenerator(
+        rotation_range=10,
+        zoom_range=0.1,
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        shear_range=0.1,
+        fill_mode='nearest'
+    )
+    
+    # Convert labels
+    le = LabelBinarizer()
+    trainLabels = le.fit_transform(trainLabels)
+    testLabels = le.transform(testLabels)
+    
+    # Initialize and compile model
+    print("[INFO] compiling model...")
+    opt = Adam(learning_rate=INIT_LR)
+    model = SudokuNet.build(width=28, height=28, depth=1, classes=10)
+    model.compile(loss="categorical_crossentropy", optimizer=opt, metrics=["accuracy"])
+    
+    # Learning rate reduction callback
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=1e-6)
+    
+    # Create models directory if it doesn't exist
+    if not os.path.exists('models'):
+        os.makedirs('models')
+    
+    # Train network
+    print("[INFO] training network...")
+    H = model.fit(
+        datagen.flow(trainData, trainLabels, batch_size=BS),
+        validation_data=(testData, testLabels),
+        steps_per_epoch=len(trainData) // BS,
+        epochs=EPOCHS,
+        callbacks=[reduce_lr],
+        verbose=1
+    )
+    
+    # Evaluate network
+    print("[INFO] evaluating network...")
+    predictions = model.predict(testData)
+    print(classification_report(
+        testLabels.argmax(axis=1),
+        predictions.argmax(axis=1),
+        target_names=[str(x) for x in le.classes_]))
+    
+    # Save model
+    model.save('models/digit_classifier.h5')
+    print("[INFO] Model saved as 'models/digit_classifier.h5'")
+    
+    # Plot training history
+    plt.style.use("ggplot")
+    plt.figure()
+    plt.plot(np.arange(0, EPOCHS), H.history["loss"], label="train_loss")
+    plt.plot(np.arange(0, EPOCHS), H.history["val_loss"], label="val_loss")
+    plt.plot(np.arange(0, EPOCHS), H.history["accuracy"], label="train_acc")
+    plt.plot(np.arange(0, EPOCHS), H.history["val_accuracy"], label="val_acc")
+    plt.title("Training Loss and Accuracy")
+    plt.xlabel("Epoch #")
+    plt.ylabel("Loss/Accuracy")
+    plt.legend(loc="lower left")
+    plt.savefig('models/training_history.png')
+    plt.close()
+
+if __name__ == "__main__":
+    train_model()
+
+# solve_sudoku.py
+
+from sudoku_utils import find_puzzle, extract_digit
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.models import load_model
+from sudoku import Sudoku
+import numpy as np
+import argparse
+import imutils
+import cv2
+import os
+
+def solve_sudoku(image_path, model_path='models/digit_classifier.h5', debug=False):
+    # Load the model
+    print("[INFO] loading digit classifier...")
+    model = load_model(model_path)
+    
+    # Load and preprocess image
+    print("[INFO] processing image...")
+    image = cv2.imread(image_path)
+    image = imutils.resize(image, width=600)
+    
+    # Find puzzle in image
+    (puzzleImage, warped) = find_puzzle(image, debug=debug)
+    
+    # Initialize board
+    board = np.zeros((9, 9), dtype="int")
+    
+    # Calculate cell dimensions
+    stepX = warped.shape[1] // 9
+    stepY = warped.shape[0] // 9
+    cellLocs = []
+    
+    # Process each cell
+    for y in range(9):
+        row = []
+        for x in range(9):
+            startX = x * stepX
+            startY = y * stepY
+            endX = (x + 1) * stepX
+            endY = (y + 1) * stepY
+            
+            row.append((startX, startY, endX, endY))
+            cell = warped[startY:endY, startX:endX]
+            digit = extract_digit(cell, debug=debug)
+            
+            if digit is not None:
+                roi = cv2.resize(digit, (28, 28))
+                roi = roi.astype("float") / 255.0
+                roi = img_to_array(roi)
+                roi = np.expand_dims(roi, axis=0)
+                pred = model.predict(roi).argmax(axis=1)[0]
+                board[y, x] = pred
+        cellLocs.append(row)
+    
+    # Print OCR'd board
+    print("[INFO] OCR'd Sudoku board:")
+    puzzle = Sudoku(3, 3, board=board.tolist())
+    puzzle.show()
+    
+    # Solve puzzle
+    print("[INFO] solving Sudoku puzzle...")
+    solution = puzzle.solve()
+    solution.show_full()
+    
+    # Draw solution on image
+    for (cellRow, boardRow) in zip(cellLocs, solution.board):
+        for (box, digit) in zip(cellRow, boardRow):
+            startX, startY, endX, endY = box
+            textX = int((endX - startX) * 0.33) + startX
+            textY = int((endY - startY) * -0.2) + endY
+            cv2.putText(puzzleImage, str(digit), (textX, textY),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 2)
+    
+    # Create output directory if it doesn't exist
+    if not os.path.exists('output'):
+        os.makedirs('output')
+    
+    # Save the result
+    output_path = os.path.join('output', 'solved_' + os.path.basename(image_path))
+    cv2.imwrite(output_path, puzzleImage)
+    
+    # Display result
+    cv2.imshow("Sudoku Solution", puzzleImage)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    
+    return puzzleImage
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("-i", "--image", required=True,
+        help="path to input Sudoku puzzle image")
+    ap.add_argument("-m", "--model", default="models/digit_classifier.h5",
+        help="path to trained digit classifier")
+    ap.add_argument("-d", "--debug", type=int, default=-1,
+        help="whether or not we are visualizing each step of the pipeline")
+    args = vars(ap.parse_args())
+    
+    solve_sudoku(args["image"], args["model"], args["debug"] > 0)
