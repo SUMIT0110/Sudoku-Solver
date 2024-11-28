@@ -41,7 +41,8 @@ def main():
         try:
             # Display the uploaded image
             image = Image.open(uploaded_file)
-            st.image(image, caption="Uploaded Puzzle", use_column_width=True)
+            st.image(image, caption="Uploaded Puzzle", use_container_width=True)
+
             
             # Save the uploaded file temporarily
             temp_path = os.path.join(temp_dir, uploaded_file.name)
@@ -60,8 +61,7 @@ def main():
                         
                         # Display the result
                         st.success("Puzzle solved successfully!")
-                        st.image(solved_image_rgb, caption="Solved Puzzle", use_column_width=True)
-                        
+                        st.image(solved_image_rgb, caption="Solved Puzzle", use_container_width=True)                        
                         # Add download button for solved image
                         temp_solved_path = os.path.join(temp_dir, "solved_" + uploaded_file.name)
                         cv2.imwrite(temp_solved_path, solved_image)
