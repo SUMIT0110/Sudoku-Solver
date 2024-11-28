@@ -1,7 +1,8 @@
-import opencv-python-headless
 # streamlit_app.py
 import streamlit as st
 import cv2
+import opencv-python-headless
+
 import numpy as np
 import tempfile
 import os
