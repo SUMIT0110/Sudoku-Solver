@@ -51,34 +51,42 @@ def find_puzzle(image, debug=False):
 
 
 def extract_digit(cell, debug=False):
-    # Apply thresholding to the cell
-    thresh = cv2.threshold(cell, 0, 255,
-        cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    # Convert cell to grayscale (handles colored digits)
+    if len(cell.shape) == 3:
+        cell = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+
+    # Normalize lighting with CLAHE
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    cell = clahe.apply(cell)
+
+    # Apply thresholding
+    thresh = cv2.threshold(cell, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
     thresh = clear_border(thresh)
-    
+
     # Find contours
-    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
-    
+
     if len(cnts) == 0:
         return None
-    
+
+    # Extract the largest contour (assumed to be the digit)
     c = max(cnts, key=cv2.contourArea)
     mask = np.zeros(thresh.shape, dtype="uint8")
     cv2.drawContours(mask, [c], -1, 255, -1)
-    
+
     # Calculate percentage of filled pixels
     (h, w) = thresh.shape
     percentFilled = cv2.countNonZero(mask) / float(w * h)
-    
+
     if percentFilled < 0.03 or percentFilled > 0.8:
         return None
-    
-    # Apply the mask to the thresholded cell
+
+    # Apply mask to the thresholded cell
     digit = cv2.bitwise_and(thresh, thresh, mask=mask)
-    
-    # Add padding
-    digit = np.pad(digit, ((4,4), (4,4)), 'constant', constant_values=0)
-    
+
+    # Add padding to the digit
+    digit = np.pad(digit, ((4, 4), (4, 4)), 'constant', constant_values=0)
+    digit = cv2.resize(digit, (28, 28), interpolation=cv2.INTER_AREA)
+
     return digit
