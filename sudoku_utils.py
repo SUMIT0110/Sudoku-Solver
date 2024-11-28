@@ -7,21 +7,31 @@ from imutils.perspective import four_point_transform
 from skimage.segmentation import clear_border
 
 def find_puzzle(image, debug=False):
-    # Convert the image to grayscale and blur it slightly
+    # Convert the image to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Normalize lighting using CLAHE
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+
+    # Apply Gaussian blur to smooth the image
     blurred = cv2.GaussianBlur(gray, (7, 7), 3)
-    
-    # Apply adaptive thresholding and then invert the threshold map
+
+    # Use adaptive thresholding
     thresh = cv2.adaptiveThreshold(blurred, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
     thresh = cv2.bitwise_not(thresh)
-    
-    # Find contours in the thresholded image and sort them by size
-    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE)
+
+    # Edge detection with morphological processing
+    edges = cv2.Canny(thresh, 50, 150)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+
+    # Find contours in the edge-detected image
+    cnts = cv2.findContours(edges.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
-    
+
     puzzleCnt = None
     for c in cnts:
         peri = cv2.arcLength(c, True)
@@ -29,15 +39,16 @@ def find_puzzle(image, debug=False):
         if len(approx) == 4:
             puzzleCnt = approx
             break
-    
+
     if puzzleCnt is None:
         raise Exception("Could not find Sudoku puzzle outline.")
-    
-    # Apply a four point perspective transform
+
+    # Apply a four-point perspective transform
     puzzle = four_point_transform(image, puzzleCnt.reshape(4, 2))
     warped = four_point_transform(gray, puzzleCnt.reshape(4, 2))
-    
+
     return (puzzle, warped)
+
 
 def extract_digit(cell, debug=False):
     # Apply thresholding to the cell
