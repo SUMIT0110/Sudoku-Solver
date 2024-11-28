@@ -1,4 +1,4 @@
-opencv-python-headless==4.9.0.80
+opencv-python-headless
 imutils==0.6.0
 scikit-image==0.22.0
 matplotlib==3.8.2
