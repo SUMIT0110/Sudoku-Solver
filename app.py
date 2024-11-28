@@ -1,3 +1,4 @@
+pip install opencv-python-headless
 # streamlit_app.py
 import streamlit as st
 import cv2
