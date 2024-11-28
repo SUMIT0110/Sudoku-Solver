@@ -1,5 +1,5 @@
 opencv-python-headless
-imutils==0.6.0
+imutils
 scikit-image==0.22.0
 matplotlib==3.8.2
 scikit-learn==1.4.0
