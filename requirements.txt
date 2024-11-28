@@ -12,3 +12,4 @@ streamlit
 Pillow
 python-dotenv
 opencv-python-headless
+opencv-contrib-python
