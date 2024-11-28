@@ -6,4 +6,4 @@ scikit-learn==1.4.0
 streamlit==1.26.0
 numpy
 Pillow==9.5.0
-tensorflow==2.13.0
+tensorflow==2.16.1
