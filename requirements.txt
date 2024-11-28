@@ -3,7 +3,6 @@ imutils
 scikit-image==0.22.0
 matplotlib==3.8.2
 scikit-learn==1.4.0
-sudoku
 streamlit==1.26.0
 numpy==1.24.3
 Pillow==9.5.0
